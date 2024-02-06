@@ -1,0 +1,646 @@
+  /*
+    Naive way (m - n - k)
+
+
+  for (int m = 0; m < M; m++) {
+    for (int n = 0; n < N; n++) {
+      for (int k = 0; k < K; k++) {
+        C[m * N + n] += A[m * K + k] * B[k * N + n];
+      }
+    }
+  }
+  */
+
+  /*
+    Naive way (m - k - n)
+
+
+  for (int m = 0; m < M; m++) {
+    for (int k = 0; k < K; k++) {
+      for (int n = 0; n < N; n++) {
+        C[m * N + n] += A[m * K + k] * B[k * N + n];
+      }
+    }
+  }
+  */
+
+  /*
+    Naive way (k - m - n)
+
+  for (int k = 0; k < K; k++) {
+    for (int m = 0; m < M; m++) {
+      for (int n = 0; n < N; n++) {
+        C[m * N + n] += A[m * K + k] * B[k * N + n];
+      }
+    }
+  }
+  */
+
+
+
+/*
+Blocking matrix k 27 GFLOPS
+*/
+#include "mat_mul.h"
+
+#include <pthread.h>
+#include <immintrin.h>
+#include <algorithm>
+#include <iostream>
+
+#define MTILESIZE (32)
+#define NTILESIZE (256)
+#define KTILESIZE (512)
+
+static float *A;
+static float *B;
+static float *C;
+static int M;
+static int N;
+static int K;
+static int nums_thread;
+
+void mat_mul(float *_A, float *_B, float *_C, int _M, int _N, int _K, int _num_threads)
+{
+  A = _A;
+  B = _B;
+  C = _C;
+  M = _M;
+  N = _N;
+  K = _K;
+  nums_thread = _num_threads;
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary = std::min(kk + KTILESIZE, K);
+    for (int mm = 0; mm < M; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, M);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+        for (int k = kk; k < KTileBoundary; k++)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a = A[m * K + k];
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              C[m * N + n] += a * B[k * N + n];
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+
+  /*
+    Tiling with, access sub 8 elements on each iter
+    for (int kk = 0; kk < K; kk += KTILESIZE) {
+    int KTileBoundary = kk + KTILESIZE;
+    for (int mm = 0; mm < M; mm += MTILESIZE) {
+      int MTileBoundary = mm + MTILESIZE;
+      for (int nn = 0; nn < N; nn += NTILESIZE) {
+        int NTileBoundary = nn + NTILESIZE;
+        for (int k = kk; k < std::min(KTileBoundary, K); k+=8) {
+          for (int m = mm; m < std::min(MTileBoundary, M); m++) {
+            float a1 = A[m * K + k + 0];
+            float a2 = A[m * K + k + 1];
+            float a3 = A[m * K + k + 2];
+            float a4 = A[m * K + k + 3];
+            float a5 = A[m * K + k + 4];
+            float a6 = A[m * K + k + 5];
+            float a7 = A[m * K + k + 6];
+            float a8 = A[m * K + k + 7];
+            for (int n = nn; n < std::min(NTileBoundary, N); n++) {
+              float b1 = B[(k + 0) * N + n];
+              float b2 = B[(k + 1) * N + n];
+              float b3 = B[(k + 2) * N + n];
+              float b4 = B[(k + 3) * N + n];
+              float b5 = B[(k + 4) * N + n];
+              float b6 = B[(k + 5) * N + n];
+              float b7 = B[(k + 6) * N + n];
+              float b8 = B[(k + 7) * N + n];
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4 + a5 * b5 + a6 * b6 + a7 * b7 + a8 * b8;
+            }
+          }
+        }
+      }
+    }
+  }
+  */
+
+  /*
+    Tiling, unrolling, k - m - n order
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary1 = std::min(kk + KTILESIZE, K);
+    for (int mm = 0; mm < M; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, M);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+        for (int k = kk; k < KTileBoundary1; k += 4)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a1 = (k < K) ? A[m * K + k + 0] : 0;
+            float a2 = (k + 1 < K) ? A[m * K + k + 1] : 0;
+            float a3 = (k + 2 < K) ? A[m * K + k + 2] : 0;
+            float a4 = (k + 3 < K) ? A[m * K + k + 3] : 0;
+
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              float b1 = (k < K) ? B[(k + 0) * N + n] : 0;
+              float b2 = (k + 1 < K) ? B[(k + 1) * N + n] : 0;
+              float b3 = (k + 2 < K) ? B[(k + 2) * N + n] : 0;
+              float b4 = (k + 3 < K) ? B[(k + 3) * N + n] : 0;
+
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4;
+            }
+          }
+        }
+      }
+    }
+  }
+
+
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary = std::min(kk + KTILESIZE, K);
+    for (int mm = 0; mm < M; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, M);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+        for (int k = kk; k < KTileBoundary; k += 4)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a1 = A[m * K + k + 0];
+            float a2 = (k + 1 < K) ? A[m * K + k + 1] : 0;
+            float a3 = (k + 2 < K) ? A[m * K + k + 2] : 0;
+            float a4 = (k + 3 < K) ? A[m * K + k + 3] : 0;
+
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              float b1 = B[(k + 0) * N + n];
+              float b2 = (k + 1 < K) ? B[(k + 1) * N + n] : 0;
+              float b3 = (k + 2 < K) ? B[(k + 2) * N + n] : 0;
+              float b4 = (k + 3 < K) ? B[(k + 3) * N + n] : 0;
+
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4;
+            }
+          }
+        }
+      }
+    }
+  }
+  */
+
+// Thread with tiling, unrolling, order k - m - n
+struct thread_args
+{
+  float *A;
+  float *B;
+  float *C;
+  int startM;
+  int endM;
+  int _N;
+  int _K;
+};
+
+void* mat_mul_thread(void *args)
+{
+  thread_args* my_args = (thread_args *)args;
+  float *A = my_args -> A;
+  float *B = my_args -> B;
+  float *C = my_args -> C;
+  int startM = my_args -> startM;
+  int endM = my_args -> endM;
+  int N = my_args -> _N;
+  int K = my_args -> _K;
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary1 = std::min(kk + KTILESIZE, K);
+    for (int mm = startM; mm < endM; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, endM);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+        for (int k = kk; k < KTileBoundary1; k += 4)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a1 = (k < K) ? A[m * K + k + 0] : 0;
+            float a2 = (k + 1 < K) ? A[m * K + k + 1] : 0;
+            float a3 = (k + 2 < K) ? A[m * K + k + 2] : 0;
+            float a4 = (k + 3 < K) ? A[m * K + k + 3] : 0;
+
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              float b1 = (k < K) ? B[(k + 0) * N + n] : 0;
+              float b2 = (k + 1 < K) ? B[(k + 1) * N + n] : 0;
+              float b3 = (k + 2 < K) ? B[(k + 2) * N + n] : 0;
+              float b4 = (k + 3 < K) ? B[(k + 3) * N + n] : 0;
+
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4;
+            }
+          }
+        }
+      }
+    }
+  }
+  pthread_exit(NULL);
+}
+
+void mat_mul(float *_A, float *_B, float *_C, int _M, int _N, int _K, int _num_threads)
+{
+  // IMPLEMENT HERE
+  pthread_t threads[_num_threads];
+  thread_args args[_num_threads];
+  for (int i = 0; i < _num_threads; i++) {
+    args[i].A = _A;
+    args[i].B = _B;
+    args[i].C = _C;
+    args[i]._N = _N;
+    args[i]._K = _K;
+    args[i].startM = _M / _num_threads * i + std::min(i, _M % _num_threads);
+    args[i].endM = _M / _num_threads * (i + 1) + std::min(i + 1, _M % _num_threads);
+    int rc = pthread_create(&threads[i], NULL, mat_mul_thread, (void *)&args[i]);
+    if (rc) {
+      std::cout << "error when creating threads " << i << std::endl;
+    } else {
+      std::cout << "success create thread" << std::endl;
+    }
+  }
+  for (int i = 0; i < _num_threads; i++) {
+    pthread_join(threads[i], NULL);
+  }
+}
+
+// SIMD 
+void *mat_mul_thread(void *args)
+{
+  thread_args *my_args = (thread_args *)args;
+  float *A = my_args->A;
+  float *B = my_args->B;
+  float *C = my_args->C;
+  int startM = my_args->startM;
+  int endM = my_args->endM;
+  int N = my_args->_N;
+  int K = my_args->_K;
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary = std::min(kk + KTILESIZE, K);
+    for (int mm = startM; mm < endM; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, endM);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+        for (int k = kk; k < KTileBoundary; k += 4)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            __m256 _a1, _a2, _a3, _a4;
+            __m256 _c1, _c2;
+            _a1 = _mm256_set1_ps(A[m * K + k + 0]);
+            _a2 = _mm256_set1_ps(A[m * K + k + 1]);
+            _a3 = _mm256_set1_ps(A[m * K + k + 2]);
+            _a4 = _mm256_set1_ps(A[m * K + k + 3]);
+
+            for (int n = nn; n < NTileBoundary; n += 16)
+            {
+              _c1 = _mm256_load_ps(&(C[m * N + n]));
+              _c2 = _mm256_load_ps(&(C[m * N + n + 8]));
+
+              __m256 _b1, _b2, _b3, _b4;
+              __m256 _d1, _d2, _d3, _d4;
+              _b1 = _mm256_load_ps(&B[(k + 0) * N + n]);
+              _b2 = _mm256_load_ps(&B[(k + 1) * N + n]);
+              _b3 = _mm256_load_ps(&B[(k + 2) * N + n]);
+              _b4 = _mm256_load_ps(&B[(k + 3) * N + n]);
+
+              _c1 = _mm256_fmadd_ps(_a1, _b1, _c1);
+              _c1 = _mm256_fmadd_ps(_a2, _b2, _c1);
+              _c1 = _mm256_fmadd_ps(_a3, _b3, _c1);
+              _c1 = _mm256_fmadd_ps(_a4, _b4, _c1);
+
+              _d1 = _mm256_load_ps(&B[(k + 0) * N + n + 8]);
+              _d2 = _mm256_load_ps(&B[(k + 1) * N + n + 8]);
+              _d3 = _mm256_load_ps(&B[(k + 2) * N + n + 8]);
+              _d4 = _mm256_load_ps(&B[(k + 3) * N + n + 8]);
+
+              _c2 = _mm256_fmadd_ps(_a1, _d1, _c2);
+              _c2 = _mm256_fmadd_ps(_a2, _d2, _c2);
+              _c2 = _mm256_fmadd_ps(_a3, _d3, _c2);
+              _c2 = _mm256_fmadd_ps(_a4, _d4, _c2);
+
+              _mm256_store_ps(&(C[m * N + n]), _c1);
+              _mm256_store_ps(&(C[m * N + n + 8]), _c2);
+            }
+          }
+        }
+      }
+    }
+  }
+  pthread_exit(NULL);
+}
+
+
+ /*
+ 600 GPS pthread no SIMD
+
+ */
+
+
+
+
+
+
+
+
+
+/*
+  OPENMP my version > 900 GFLOPS
+*/
+#include "mat_mul.h"
+
+#include <pthread.h>
+#include <immintrin.h>
+#include <algorithm>
+#include <iostream>
+#include <omp.h>
+
+#define MTILESIZE (32)
+#define NTILESIZE (512)
+#define KTILESIZE (512)
+
+void mat_mul(float *_A, float *_B, float *_C, int _M, int _N, int _K, int _num_threads)
+{
+  // IMPLEMENT HERE
+  float *A = _A;
+  float *B = _B;
+  float *C = _C;
+  int M = _M;
+  int N = _N;
+  int K = _K;
+  int kk, mm, nn;
+
+  for (kk = 0; kk < K; kk += KTILESIZE)
+  {
+    int KTileBoundary1 = std::min(kk + KTILESIZE, K);
+
+    #pragma omp parallel for schedule(auto)
+    for (mm = 0; mm < M; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, M);
+
+      #pragma omp parallel for schedule(auto)
+      for (nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+        for (int k = kk; k < KTileBoundary1; k += 4)
+        {
+          
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a1 = A[m * K + k + 0];
+            float a2 = A[m * K + k + 1];
+            float a3 = A[m * K + k + 2];
+            float a4 = A[m * K + k + 3];
+
+            
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              float b1 = B[(k + 0) * N + n];
+              float b2 = B[(k + 1) * N + n];
+              float b3 = B[(k + 2) * N + n];
+              float b4 = B[(k + 3) * N + n];
+
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/*
+OpenMP > 900 GFLOPS
+*/
+#include "mat_mul.h"
+
+#include <pthread.h>
+#include <immintrin.h>
+#include <algorithm>
+#include <iostream>
+#include<omp.h>
+
+#define MTILESIZE (32)
+#define NTILESIZE (512)
+#define KTILESIZE (1024)
+
+static float *A;
+static float *B;
+static float *C;
+static int M;
+static int N;
+static int K;
+static int nums_thread;
+
+void mat_mul(float *_A, float *_B, float *_C, int _M, int _N, int _K, int _num_threads)
+{
+  float *A = _A, *B = _B, *C = _C;
+  int M = _M, N = _N, K = _K;
+  // IMPLEMENT HERE
+  for (int kk = 0; kk < K; kk += KTILESIZE)
+    #pragma omp parallel for
+    for (int ii = 0; ii < M; ii += MTILESIZE)
+      for (int jj = 0; jj < N; jj += NTILESIZE)
+      {
+        int k, i, j;
+        int boundk = std::min(kk + KTILESIZE, K);
+        int boundi = std::min(ii + MTILESIZE, M);
+        int boundj = std::min(jj + NTILESIZE, N);
+        for (k = kk; k < boundk - 3; k += 4)
+          for (i = ii; i < boundi; i++)
+          {
+            float ak0 = A[i * K + k];
+            float ak1 = A[i * K + (k + 1)];
+            float ak2 = A[i * K + (k + 2)];
+            float ak3 = A[i * K + (k + 3)];
+            for (j = jj; j < boundj; j++)
+            {
+              float bk0 = B[k * N + j];
+              float bk1 = B[(k + 1) * N + j];
+              float bk2 = B[(k + 2) * N + j];
+              float bk3 = B[(k + 3) * N + j];
+              C[i * N + j] += (ak0 * bk0) + (ak1 * bk1) + (ak2 * bk2) + (ak3 * bk3);
+            }
+          }
+        for (; k < boundk; k++)
+          for (i = ii; i < boundi; i++)
+            for (j = jj; j < boundj; j++)
+              C[i * N + j] += A[i * K + k] * B[k * N + j];
+      }
+}
+
+/*
+  Offload data to GPU
+*/
+
+/*
+pthread with 1100 GFLOPS
+*/
+#include "mat_mul.h"
+
+#include <pthread.h>
+#include <immintrin.h>
+#include <algorithm>
+#include <iostream>
+
+#define MTILESIZE (32)
+#define NTILESIZE (1024)
+#define KTILESIZE (384)
+
+static float *A;
+static float *B;
+static float *C;
+static int M;
+static int N;
+static int K;
+static int nums_thread;
+
+void *mat_mul_thread(void *args)
+{
+  long my_args = (long)args;
+  int startM = M / nums_thread * my_args;
+  int endM = M / nums_thread * (my_args + 1);
+  int evenK = K - K % KTILESIZE;
+  for (int kk = 0; kk < evenK; kk += KTILESIZE)
+  {
+    int KTileBoundary1 = kk + KTILESIZE;
+    for (int mm = startM; mm < endM; mm += MTILESIZE)
+    {
+      int MTileBoundary = std::min(mm + MTILESIZE, endM);
+      for (int nn = 0; nn < N; nn += NTILESIZE)
+      {
+        int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+        for (int k = kk; k < KTileBoundary1; k += 6)
+        {
+          for (int m = mm; m < MTileBoundary; m++)
+          {
+            float a1 = A[m * K + k + 0];
+            float a2 = A[m * K + k + 1];
+            float a3 = A[m * K + k + 2];
+            float a4 = A[m * K + k + 3];
+            float a5 = A[m * K + k + 4];
+            float a6 = A[m * K + k + 5];
+
+            for (int n = nn; n < NTileBoundary; n++)
+            {
+              float b1 = B[(k + 0) * N + n];
+              float b2 = B[(k + 1) * N + n];
+              float b3 = B[(k + 2) * N + n];
+              float b4 = B[(k + 3) * N + n];
+              float b5 = B[(k + 4) * N + n];
+              float b6 = B[(k + 5) * N + n];
+
+              C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4 + a5 * b5 + a6 * b6;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (int mm = startM; mm < endM; mm += MTILESIZE)
+  {
+    int MTileBoundary = std::min(mm + MTILESIZE, endM);
+    for (int nn = 0; nn < N; nn += NTILESIZE)
+    {
+      int NTileBoundary = std::min(nn + NTILESIZE, N);
+
+      for (int k = evenK; k < K; k += 4)
+      {
+        for (int m = mm; m < MTileBoundary; m++)
+        {
+          float a1 = A[m * K + k + 0];
+          float a2 = A[m * K + k + 1];
+          float a3 = A[m * K + k + 2];
+          float a4 = A[m * K + k + 3];
+
+          for (int n = nn; n < NTileBoundary; n++)
+          {
+            float b1 = B[(k + 0) * N + n];
+            float b2 = B[(k + 1) * N + n];
+            float b3 = B[(k + 2) * N + n];
+            float b4 = B[(k + 3) * N + n];
+
+            C[m * N + n] += a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4;
+          }
+        }
+      }
+    }
+  }
+  pthread_exit(NULL);
+}
+
+void mat_mul(float *_A, float *_B, float *_C, int _M, int _N, int _K, int _num_threads)
+{
+  A = _A;
+  B = _B;
+  C = _C;
+  M = _M;
+  N = _N;
+  K = _K;
+  nums_thread = _num_threads;
+  pthread_t threads[_num_threads];
+  pthread_attr_t attr[_num_threads];
+  cpu_set_t cpus[_num_threads];
+  for (long i = 0; i < _num_threads; i++)
+  {
+    pthread_attr_init(&attr[i]);
+    CPU_ZERO(&cpus[i]);
+    CPU_SET(i, &cpus[i]);
+
+    // Limit thread to run only on 1 core
+    pthread_attr_setaffinity_np(&attr[i], sizeof(cpu_set_t), &cpus[i]);
+    pthread_create(&threads[i], &attr[i], mat_mul_thread, (void *)i);
+  }
+
+  for (int i = 0; i < _num_threads; i++)
+  {
+    pthread_join(threads[i], NULL);
+  }
+}
+
+
+TARGET=main
+OBJECTS=util.o mat_mul.o
+
+CPPFLAGS=-std=c++11 -Wall -O3 -march=znver2 -fopenmp -fcf-protection=none -fno-stack-protector -ftree-vectorize -funroll-loops -ffast-math
+LDFLAGS=-lm -pthread
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+
+clean:
+	rm -rf $(TARGET) $(OBJECTS)
+
+
+srun --exclusive ./main -v -n 3 4096 4096 4096 -t 32

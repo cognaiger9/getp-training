@@ -1,0 +1,13 @@
+srun ./main -v -n 3 -t 8 10000000
+
+/*
+  Just thread
+  void* sub_add(void *args) {
+  thdArg *myarg = (thdArg *)args;
+  for (int i = myarg -> base; i < myarg -> end; i++) {
+    (myarg -> C)[i] = (myarg -> A)[i] + (myarg -> B)[i];
+  }
+  pthread_exit(NULL);
+}
+*/
+

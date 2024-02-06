@@ -1,0 +1,1 @@
+salloc -N 2 mpiexec -npernode 2 ./helloworld
